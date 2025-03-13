@@ -699,6 +699,7 @@ void kthread_exit() {
   if (found) {
     wakeup1(thread);
   } else {
+    kill_all();
     release(&ptable.lock);
     exit();
     wakeup(thread);
@@ -729,10 +730,12 @@ int kthread_join(int thread_id) {
     if (new_thread->tid == thread_id)
     {
       if (new_thread->parent != proc) {
+        release(&ptable.lock);
         return -1; 
       }
       found = 1;
       break;
+      release(&ptable.lock);
     }
   }
   
@@ -746,12 +749,14 @@ int kthread_join(int thread_id) {
   {
     //Make t sleep using sleep method with a lock
     sleep(new_thread, &ptable.lock);
+    // release(&ptable.lock);
   }
 
   //If state of t is zombie
   if (new_thread->state == TZOMBIE)
   {
     clearThread(new_thread);
+    // release(&ptable.lock);
   }
 
   release(&ptable.lock);
