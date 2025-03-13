@@ -96,3 +96,37 @@ sys_procdump(void)
   procdump();
   return 0;
 }
+
+int sys_kthread_create(void) {
+  void *start_func;
+  void *stack;
+  int stack_size;
+
+  if(argptr(0, (void*)&start_func, sizeof(void*)) < 0 || argptr(1, (void*)&stack, sizeof(void*)) < 0 || argint(2, &stack_size) < 0)
+  return -1;
+
+  return kthread_create(start_func, stack, stack_size);
+}
+
+
+int sys_kthread_id(void) {
+  return kthread_id();
+}
+
+int sys_kthread_exit(void)
+{
+  kthread_exit();
+  return 0;
+}
+
+int sys_kthread_join(void)
+{
+  int thread_id;
+
+  if(argint(0, &thread_id) < 0)
+    return -1;
+
+  return kthread_join(thread_id);
+}
+
+

@@ -14,7 +14,7 @@ void * print_id(void)
 }
 int main()
 {
-	int tid1,tid2;
+	int tid1, tid2;
 	char stack1[1024];
 	char stack2[1024];
 		printf(1,"thread in main %d,process %d\n", kthread_id(),getpid());

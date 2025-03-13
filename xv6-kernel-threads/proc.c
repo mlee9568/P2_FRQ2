@@ -16,6 +16,11 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+struct {
+  struct spinlock lock;
+  // struct mutex mutex[MAX_MUTEXES];
+} mtable;
+
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -30,6 +35,7 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&mtable.lock, "mtable");
 }
 
 struct thread*
@@ -168,17 +174,22 @@ growproc(int n)
   uint sz;
 
   sz = proc->sz;
+  acquire(&ptable.lock);
   if(n > 0){
     if((sz = allocuvm(proc->pgdir, sz, sz + n)) == 0){
+      release(&ptable.lock);
       return -1;
     }
   } else if(n < 0){
     if((sz = deallocuvm(proc->pgdir, sz, sz + n)) == 0){
+      release(&ptable.lock);
       return -1;
     }
   }
   proc->sz = sz;
   switchuvm(proc);
+
+  release(&ptable.lock);
   return 0;
 }
 
@@ -273,7 +284,18 @@ exit(void)
     }
   }
 
+  //kill all threads in this process
+  struct thread *new_thread;
+  for (new_thread = proc -> threads; new_thread < &proc->threads[NTHREAD]; new_thread++)
+  {
+    if(new_thread->state != TRUNNING && new_thread->state != TUNUSED && new_thread != thread)
+    {
+      new_thread->state = TZOMBIE;
+    }
+  }
+
   // Jump into the scheduler, never to return.
+  kill_all();
   thread->state = TINVALID;
   proc->state = ZOMBIE;
 
@@ -603,4 +625,169 @@ procdump(void)
 
 
   }
+}
+
+int kthread_create(void *(start_func)(), void *stack, int stack_size) {
+  
+  acquire(&ptable.lock);
+
+  struct thread *new_thread;
+  struct proc *curr_proc = proc;
+
+  //verify args
+  if(!start_func || !stack || stack_size <= 0){
+    cprintf("one or more invalid args\n");
+    release(&ptable.lock);
+    return -1;
+  }
+
+  // allocate free thread slot in this process
+  new_thread = allocthread(curr_proc);
+
+  if(!new_thread){
+    cprintf("no free slot in proc %d\n", curr_proc->pid);
+    release(&ptable.lock);
+    return -1;
+  }
+
+  //copy current thread's trap frame
+  *new_thread->tf = *thread->tf;
+
+  // find stack address and make esp equal to that 
+  new_thread->tf->esp = (uint)stack + stack_size;
+
+  //update base pointer to stack pointer
+  new_thread->tf->ebp = new_thread->tf->esp;
+
+  //find address of start function and set instruction pointer to start func
+  new_thread->tf->eip = (uint)start_func;
+
+  //mark thread as runnable
+  new_thread->state = TRUNNABLE;
+
+  release(&ptable.lock);
+
+  return new_thread->tid;
+}
+
+int kthread_id() {
+  if (thread == 0 || proc == 0){
+    return -1; 
+  }
+  return thread->tid; 
+}
+
+void kthread_exit() {
+
+  acquire(&ptable.lock);
+
+  struct thread* new_thread;
+  int found = 0;
+
+  for (new_thread = proc->threads; new_thread < &proc->threads[NTHREAD]; new_thread++)
+  {
+  //If t is not current thread (because calling thread is current)
+  //If t is not Unused, not Zombied and not Invalid
+   if (new_thread != thread) {
+    if (new_thread->state != TUNUSED && new_thread->state != TZOMBIE && new_thread->state != TINVALID) {
+      found = 1;
+      break;
+    }
+   }
+  }
+
+  if (found) {
+    wakeup1(thread);
+  } else {
+    release(&ptable.lock);
+    exit();
+    wakeup(thread);
+  }
+
+  thread->state = TZOMBIE;
+  sched();
+  release(&ptable.lock);
+}
+
+int kthread_join(int thread_id) {
+
+  acquire(&ptable.lock);
+
+  if (thread_id < 0 || thread_id == thread->tid || thread_id >= nexttid) {
+    //cprintf("thread id check \n");
+    release(&ptable.lock);
+    return -1;
+  }
+
+  int found = 0;
+  struct thread *new_thread;
+
+  //Loop through all threads to find target thread id(parameter)
+  //Make t point target thread with thread_id
+  for (new_thread = proc->threads; new_thread < &proc->threads[NTHREAD]; new_thread++)
+  {
+    if (new_thread->tid == thread_id)
+    {
+      if (new_thread->parent != proc) {
+        return -1; 
+      }
+      found = 1;
+      break;
+    }
+  }
+  
+  if (!found) {
+    release(&ptable.lock);
+    return -1;
+  }
+
+  //While (t->t_id = thread_id and valid)
+  while (new_thread->tid == thread_id && new_thread->state != TZOMBIE && new_thread->state != TUNUSED && new_thread->state != TINVALID )
+  {
+    //Make t sleep using sleep method with a lock
+    sleep(new_thread, &ptable.lock);
+  }
+
+  //If state of t is zombie
+  if (new_thread->state == TZOMBIE)
+  {
+    clearThread(new_thread);
+  }
+
+  release(&ptable.lock);
+  return 0;
+}
+
+
+void kill_all(void) {
+
+ struct thread *new_thread;
+ for (new_thread = proc->threads; new_thread < &proc->threads[NTHREAD]; new_thread++)
+ {
+  //If ( thread t is not current thread and not running and not unused)->
+  if (new_thread != thread && new_thread->state != TRUNNING && new_thread->state!= TUNUSED) 
+  {
+    new_thread->state = TZOMBIE;
+  }
+ }
+ //Make current thread zombie -> find current thread and change its state
+  thread->state = TZOMBIE;
+  //Kill process -> proc->killed = 1
+  proc->killed = 1;
+}
+
+void kill_others(void)
+{
+  acquire(&ptable.lock);
+  struct thread *new_thread;
+  
+  for (new_thread = proc->threads; new_thread < &proc->threads[NTHREAD]; new_thread++)
+  {
+    //If ( thread t is not current thread and not running and not unused)
+  if(new_thread != thread && new_thread->state != TRUNNING && new_thread->state != TUNUSED)
+  {
+    new_thread->state = TZOMBIE; //Make it zombie
+  }
+  }
+  release(&ptable.lock);
 }
