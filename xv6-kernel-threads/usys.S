@@ -38,3 +38,4 @@ SYSCALL(kthread_mutex_dealloc)
 SYSCALL(kthread_mutex_lock)
 SYSCALL(kthread_mutex_unlock)
 SYSCALL(procdump)
+

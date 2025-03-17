@@ -1,3 +1,5 @@
+#include <stdbool.h>
+#include <stdio.h>
 #include "types.h"
 #include "defs.h"
 #include "param.h"
@@ -6,23 +8,22 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include <stddef.h>
+
 
 extern char getSharedCounter(int index);
 
 void clearThread(struct thread * t);
-
+void init_mutexes(); 
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
 } ptable;
 
-struct {
-  struct spinlock lock;
-  // struct mutex mutex[MAX_MUTEXES];
-} mtable;
 
 static struct proc *initproc;
 
+bool pinit_called = false;
 int nextpid = 1;
 int nexttid = 1;
 int nextmid = 1;
@@ -36,6 +37,21 @@ pinit(void)
 {
   initlock(&ptable.lock, "ptable");
   initlock(&mtable.lock, "mtable");
+  init_mutexes();
+
+}
+void init_mutexes() {
+    for (int i = 0; i < MAX_MUTEXES; i++) {
+        mtable.mutexes[i].mid = -1;
+        mtable.mutexes[i].state = MUNUSED;
+        mtable.mutexes[i].owner = -1;
+    }
+}
+
+
+struct thread*
+mythread(void) {
+    return thread;
 }
 
 struct thread*
@@ -796,3 +812,100 @@ void kill_others(void)
   }
   release(&ptable.lock);
 }
+
+kthread_mutex_t mutexes[MAX_MUTEXES];
+
+int kthread_mutex_alloc() {
+
+    if (pinit_called == false) {
+        pinit();
+        pinit_called = true;
+    }
+    acquire(&mtable.lock);
+
+    for (int i = 0; i < MAX_MUTEXES; i++) {
+        if (mtable.mutexes[i].state == MUNUSED) {
+            mtable.mutexes[i].mid = nextmid++;
+            mtable.mutexes[i].state = MUNLOCKED;
+            mtable.mutexes[i].owner = -1;
+            release(&mtable.lock);
+            return mtable.mutexes[i].mid;
+        }
+    }
+    release(&mtable.lock);
+    return -1; 
+}
+int kthread_mutex_dealloc(int mutex_id) {
+    struct kthread_mutex *m = NULL;
+
+    acquire(&mtable.lock);  
+    for (int i = 0; i < MAX_MUTEXES; i++) {
+        if (mtable.mutexes[i].mid == mutex_id) {
+            m = &mtable.mutexes[i];
+            break;
+        }
+    }
+    if (!m || m->state == MLOCKED) {
+        release(&mtable.lock);
+        return -1;
+    }
+    m->mid = 0;
+    m->state = MUNUSED;
+    m->owner = -1;  
+
+    release(&mtable.lock);  
+    return 0;
+}
+
+
+
+int kthread_mutex_lock(int mutex_id) {
+    acquire(&mtable.lock);  
+
+    for (int i = 0; i < MAX_MUTEXES; i++) {
+        if (mtable.mutexes[i].mid == mutex_id) {
+            if (mtable.mutexes[i].state == MUNUSED) {
+                release(&mtable.lock);
+                return -1;
+            }
+
+            for (; mtable.mutexes[i].state == MLOCKED;) {
+              sleep((void*)&mtable.mutexes[i], &mtable.lock);
+            }
+            mtable.mutexes[i].state = MLOCKED;
+            mtable.mutexes[i].owner = thread->tid;
+
+            release(&mtable.lock);
+            return 0;
+        }
+    }
+
+    release(&mtable.lock);  
+    return -1;
+}
+
+
+int kthread_mutex_unlock(int mutex_id) {
+    acquire(&mtable.lock);  
+
+    for (int i = 0; i < MAX_MUTEXES; i++) {
+        if (mtable.mutexes[i].mid == mutex_id) {
+            if (mtable.mutexes[i].state != MLOCKED) {
+                release(&mtable.lock);
+                return -1;
+            }
+
+            mtable.mutexes[i].state = MUNLOCKED;
+            mtable.mutexes[i].owner = -1;
+
+            wakeup((void*)&mtable.mutexes[i]);
+
+            release(&mtable.lock);
+            return 0;
+        }
+    }
+    release(&mtable.lock); 
+    return -1;
+}
+
+

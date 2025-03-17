@@ -15,8 +15,10 @@ struct cpu {
   struct cpu *cpu;
   struct proc *proc;           // The currently-running process.
   struct thread *thread;
+
 };
 
+struct thread* mythread(void);
 extern struct cpu cpus[NCPU];
 extern int ncpu;
 
@@ -53,6 +55,19 @@ struct context {
 
 enum procstate { UNUSED, USED, ZOMBIE };                                // state of a dying process.
 enum threadstate { TUNUSED, TEMBRYO, TSLEEPING, TRUNNABLE, TRUNNING, TZOMBIE, TINVALID };
+enum mutexstate { MUNUSED, MLOCKED, MUNLOCKED };
+
+struct kthread_mutex {
+    int mid;               
+    enum mutexstate state;  
+    int owner;              
+};
+
+struct {
+    struct spinlock lock;
+    struct kthread_mutex mutexes[MAX_MUTEXES];
+} mtable;
+
 
 struct thread {
   int tid;                     // Thread ID
@@ -78,6 +93,8 @@ struct proc {
   char name[16];               // Process name (debugging)
   struct thread threads[NTHREAD]; // static thread array
 };
+
+
 
 
 // Process memory is laid out contiguously, low addresses first:
