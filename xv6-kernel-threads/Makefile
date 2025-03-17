@@ -177,6 +177,7 @@ UPROGS=\
 	_threadtest1\
 	_threadtest2\
 	_threadtest3\
+	_race\
 
 	
 
